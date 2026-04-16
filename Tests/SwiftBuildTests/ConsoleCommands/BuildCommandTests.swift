@@ -189,6 +189,7 @@ fileprivate struct BuildCommandTests {
         }
     }
 
+
     @Test(.requireHostOS(.macOS)) // uses xcodebuild
     func buildCommandWithXcodeProject() async throws {
         let projectPath = try #require(Bundle.module.resourceURL)
@@ -245,6 +246,47 @@ fileprivate struct BuildCommandTests {
             _ = try await cli.getResponse()
 
             await #expect(try cli.exitStatus == .exit(0))
+        }
+    }
+
+
+    @Test
+    func prepareForIndexCommandResolvesPrepareTargetNames() async throws {
+        try await withTemporaryDirectory { tmp in
+            let pifPath = tmp.join("pif.json")
+            try pif(basePath: tmp).propertyListItem.asJSONFragment().unsafeStringValue.write(to: URL(fileURLWithPath: pifPath.str), atomically: true, encoding: .utf8)
+
+            try await withCLIConnection { cli in
+                try cli.send(command: commandSequenceCodec.encode(["prepareForIndex", pifPath.str, "--target", "aTarget", "--prepare", "nonExistent"]))
+
+                let reply = try await cli.getResponse()
+                #expect(reply.contains("Could not find target named 'nonExistent'"), Comment(rawValue: reply))
+
+                try cli.send(command: "quit")
+                _ = try await cli.getResponse()
+
+                await #expect(try cli.exitStatus == .exit(0))
+            }
+        }
+    }
+
+    @Test
+    func prepareForIndexCommandWithValidPrepareTargets() async throws {
+        try await withTemporaryDirectory { tmp in
+            let pifPath = tmp.join("pif.json")
+            try pif(basePath: tmp).propertyListItem.asJSONFragment().unsafeStringValue.write(to: URL(fileURLWithPath: pifPath.str), atomically: true, encoding: .utf8)
+
+            try await withCLIConnection { cli in
+                try cli.send(command: commandSequenceCodec.encode(["prepareForIndex", pifPath.str, "--target", "aTarget", "--prepare", "aTarget", "--derivedDataPath", "\(tmp.str)/.buildData"]))
+
+                let reply = try await cli.getResponse()
+                #expect(reply.contains(#"{"kind":"buildCompleted","result":"#), Comment(rawValue: reply))
+
+                try cli.send(command: "quit")
+                _ = try await cli.getResponse()
+
+                await #expect(try cli.exitStatus == .exit(0))
+            }
         }
     }
 }
