@@ -31,7 +31,7 @@ fileprivate struct BuildCommandTests {
         let projectPIF: SWBPropertyListItem = [
             "guid": "P1",
             "path": .plString(basePath.join("aProject.xcodeproj").str),
-            "targets": ["T1"],
+            "targets": ["T1", "T2"],
             "groupTree": [
                 "guid": "G1",
                 "type": "group",
@@ -73,6 +73,28 @@ fileprivate struct BuildCommandTests {
                 "name": "aTarget"
             ]
         ]
+        let target2PIF: SWBPropertyListItem = [
+            "guid": "T2",
+            "name": "bTarget",
+            "type": "standard",
+            "buildRules": [],
+            "buildPhases": [],
+            "buildConfigurations": [
+                [
+                    "guid": "TC2",
+                    "name": "Config1",
+                    "buildSettings": [
+                        "USER_PROJECT_SETTING": "USER_PROJECT_VALUE"
+                    ]
+                ]
+            ],
+            "dependencies": [],
+            "productTypeIdentifier": "com.apple.product-type.tool",
+            "productReference": [
+                "guid": "PR2",
+                "name": "bTarget"
+            ]
+        ]
         let topLevelPIF: SWBPropertyListItem = [
             [
                 "type": "workspace",
@@ -88,6 +110,11 @@ fileprivate struct BuildCommandTests {
                 "type": "target",
                 "signature": "T1",
                 "contents": targetPIF
+            ],
+            [
+                "type": "target",
+                "signature": "T2",
+                "contents": target2PIF
             ]
         ]
         return topLevelPIF
@@ -249,9 +276,33 @@ fileprivate struct BuildCommandTests {
         }
     }
 
+    @Test
+    func buildCommandWithPIFAndPrepareOverride() async throws {
+        let supportedPIFFileExtensions: [String] = ["json", "pif"]
+        for fileExtension in supportedPIFFileExtensions {
+            try await withTemporaryDirectory { tmp in
+                let pifPath = tmp.join("pif.\(fileExtension)")
+                try pif(basePath: tmp).propertyListItem.asJSONFragment().unsafeStringValue.write(to: URL(fileURLWithPath: pifPath.str), atomically: true, encoding: .utf8)
+
+
+                try await withCLIConnection(currentDirectory: tmp) { cli in
+                    try cli.send(command: commandSequenceCodec.encode(["prepareForIndex", pifPath.str, "--target", "aTarget", "--target", "bTarget", "--prepare", "bTarget"]))
+
+                    let reply = try await cli.getResponse()
+                    #expect(reply.contains(#"{"kind": "preparedForIndex", "targetGUID": "T2"}"#), Comment(rawValue: reply))
+                    #expect(reply.contains(#"{"kind":"buildCompleted","result":"ok"}"#), Comment(rawValue: reply))
+
+                    try cli.send(command: "quit")
+                    _ = try await cli.getResponse()
+
+                    await #expect(try cli.exitStatus == .exit(0))
+                }
+            }
+        }
+    }
 
     @Test
-    func prepareForIndexCommandResolvesPrepareTargetNames() async throws {
+    func prepareForIndexCommandWithInvalidPrepareTarget() async throws {
         try await withTemporaryDirectory { tmp in
             let pifPath = tmp.join("pif.json")
             try pif(basePath: tmp).propertyListItem.asJSONFragment().unsafeStringValue.write(to: URL(fileURLWithPath: pifPath.str), atomically: true, encoding: .utf8)
@@ -261,26 +312,6 @@ fileprivate struct BuildCommandTests {
 
                 let reply = try await cli.getResponse()
                 #expect(reply.contains("Could not find target named 'nonExistent'"), Comment(rawValue: reply))
-
-                try cli.send(command: "quit")
-                _ = try await cli.getResponse()
-
-                await #expect(try cli.exitStatus == .exit(0))
-            }
-        }
-    }
-
-    @Test
-    func prepareForIndexCommandWithValidPrepareTargets() async throws {
-        try await withTemporaryDirectory { tmp in
-            let pifPath = tmp.join("pif.json")
-            try pif(basePath: tmp).propertyListItem.asJSONFragment().unsafeStringValue.write(to: URL(fileURLWithPath: pifPath.str), atomically: true, encoding: .utf8)
-
-            try await withCLIConnection { cli in
-                try cli.send(command: commandSequenceCodec.encode(["prepareForIndex", pifPath.str, "--target", "aTarget", "--prepare", "aTarget", "--derivedDataPath", "\(tmp.str)/.buildData"]))
-
-                let reply = try await cli.getResponse()
-                #expect(reply.contains(#"{"kind":"buildCompleted","result":"#), Comment(rawValue: reply))
 
                 try cli.send(command: "quit")
                 _ = try await cli.getResponse()
